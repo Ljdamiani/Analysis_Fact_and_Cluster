@@ -1,0 +1,1281 @@
+---
+title: "Atividade Análise Fatorial e Clusterização"
+author:
+- 'João Lucas Simon'
+- 'Cartão UFRGS: 00324507'
+-
+- 'Leonardo Ribeiro Damiani Júnior'
+- 'Cartão UFRGS: 00326165'
+date: "06/10/2022"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+---
+
+```{r packages, echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+library(psych)
+library(pastecs)
+library(corrplot)
+library(factoextra)
+library(cluster)
+library(dendextend)
+library(NbClust)
+library(GPArotation)
+
+```
+
+```{r setup, echo=FALSE}
+opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE)
+```
+
+<br>
+
+# Introdução
+
+<br>
+
+O nosso objetivo é realizar a **análise fatorial** e a **clusterização** com o banco de dados fornecidos.
+
+Dessa forma, este trabalho estará dividido nestas duas partes com suas respectivas etapas.
+
+<br>
+
+### Importação do banco de dados
+
+```{r importacao, echo=TRUE}
+
+# Importação
+dados <- read.csv2("data.csv")
+
+```
+
+O banco fornecido pelo professor para esta atividade diz respeito a um conjunto de dados que provêm de uma versão online do Kentucky Inventory of Mindfulness Skills.
+
+Assim, esta avaliação é composta de 39 itens avaliados na seguinte escala de 5 pontos (0 = nenhuma selecionada) :
+
+</br>
+
+-   **1 = Nunca ou muito raramente verdadeiro**
+-   **2 = Raramente verdadeiro**
+-   **3 = Às vezes verdadeiro**
+-   **4 = Frequentemente verdadeiro**
+-   **5 = Muito frequentemente ou sempre verdadeiro**
+
+</br>
+
+Abaixo, temos o nosso conjunto de dados tendo suas 10 primeiras linhas representadas na tabela.
+
+```{r tabela_dados}
+
+# Tabela
+kable(dados[1:10, ], caption = "As 10 Primeiras Linhas do Banco de Dados") %>%
+  kable_paper("hover", full_width = F) %>%
+  scroll_box(width = "800px")
+```
+
+</br>
+
+### Análise Descritiva
+
+Primeiro, podemos perceber que não existem dados faltantes em nosso banco:
+
+</br>
+
+```{r}
+
+# Verificando NAs
+nas = table(is.na(dados))
+if (is.na(nas[2])){nas = 0} else {nas = nas[2]}
+
+# Criando Data Frame
+nas = data.frame(nas)
+colnames(nas) = "Número de Dados Faltantes (NA)"
+
+# Tabela
+kable(nas, align = "c") %>%
+  kable_paper("hover", full_width = T)
+
+```
+
+</br>
+
+Porém, temos em nossas variáveis a possível resposta 0, que como mostrado anteriormente condiz com a situação de nenhuma das opções terem sido escolhidos. Assim, note que abaixo estamos mostrando quantas vezes este caso ocorreu:
+
+</br>
+
+```{r}
+
+# Verificando NAs
+zeros = table((dados == 0))
+if (is.na(zeros[2])){zeros = 0} else {zeros = zeros[2]}
+
+# Criando Data Frame
+zeros = data.frame(zeros)
+colnames(zeros) = "Número de Respostas Não Escolhidas (0)"
+row.names(zeros) = ""
+
+# Tabela
+kable(zeros, align = "c") %>%
+  kable_paper("hover", full_width = T)
+
+```
+
+</br>
+
+Sendo assim, retiramos as observações (linhas) de nosso banco de dados que continham pelo menos uma resposta igual a 0, para pernacemos apenas com as da Escala Likert.
+
+```{r}
+
+# Guarda os Dados Originais
+dados_original = dados
+
+# Dados sem 0
+indices = c()
+for (i in 1:601){
+  
+  # verifica os valores da linha
+  ver = table(dados[i, ] == 0)
+  
+  # Se tem zero na linha guardamos o indice da linha
+  if (is.na(ver[2])){next} else {indices = append(indices, i)}
+  
+}
+
+# Retirando as linhas com zero
+dados = dados[-indices, ]
+```
+
+Além disso, abaixo estamos mostrando as tabelas de frequências das nossas variáveis categóricas e as algumas estatísticas das variáveis quantitativas.
+
+</br>
+
+```{r}
+
+# Colunas numericas
+num = c("observing", "describing", "accepting", "acting", "age")
+
+# Nomes das coluna das questoes (categoricas) + gender
+subq = names(dados[!(names(dados) %in% num)])
+
+# Transformando em Fatores
+dados[subq] = lapply(dados[subq], as.factor) 
+
+# Transformando em Numericos
+dados[num] = lapply(dados[num], as.numeric)
+
+# Resumo
+resumo = summary(dados[subq])
+
+# Frequências das Qualitativas
+
+kable(resumo, 
+      align = "c", caption = "Tabelas de Frequências das Variáveis Qualitativas") %>%
+  kable_paper("hover", full_width = T) %>%
+  scroll_box(width = "800px")
+
+```
+
+</br>
+
+```{r}
+
+# Estatísticas das Quantitativas
+
+aux1 <- stat.desc(dados[num])
+aux1 <- aux1[c(4,5,8,9,12:14),]
+
+rownames(aux1) <- c(" Mínimo "," Máximo "," Mediana "," Média ",
+                    " Variância "," Desvio Padrão ",
+                    " Coeficiente de Variação ")
+aux1 = t(aux1)
+
+# Tabela com as Principais Estatísticas
+
+kable(aux1, digits = 4, 
+      align = "c", caption = "Estatísticas Descritivas das Variáveis Numéricas") %>%
+  kable_paper("hover", full_width = T)
+
+
+```
+
+</br>
+
+Então, com a nossa análise feita acima nas variáveis de nosso banco, iremos seguir para a análise fatorial.
+
+</br>
+
+# Análise Fatorial
+
+Nesta seção iremos realizar a técnica de análise fatorial buscando reduzir as nossas variáveis categórias que representam as questões (Q1 - Q39) em um certo número de fatores. Por isso, começamos por verificar a adequabilidade destes dados.
+
+```{r}
+# Transforma as Questoes novamente para numérico
+aux = read.csv2("data.csv")
+dadosQ = aux[-indices, 1:39]
+```
+
+</br>
+
+### Medidas de Ajuste
+
+Em nossa atividade devemos primeiramente verificar a adequabilidade de nossos dados para análise fatorial, ou seja, verificar se esta técnica é conveniente. Por isso, o nosso primeiro passso consiste em calcular a matriz de correlação das nossas variáveis.
+
+</br>
+
+-   **Matriz de Correlação**
+
+```{r, fig.align='left', fig.height=10, fig.width=10}
+# Matriz de correlação
+correlacao <- cor(dadosQ)
+
+# Tabela
+kable(correlacao, 
+      align = "c", caption = "Matriz de Correlação") %>%
+  kable_paper("hover", full_width = T) %>%
+  scroll_box(width = "800px", height = "500px")
+
+# Graficamente
+corrplot(correlacao, method = "circle")
+```
+
+Percebemos pela matriz acima que temos variáveis correlacionadas e outras não correlacionadas, visualmente não parecemos ter encontrado nenhum problema com alguma variável (alta correlação ou nenhuma correlação).
+
+Sendo assim, para a adequabilidade da análise fatorial, utilizaremos duas medidas de ajuste, onde iniciaremos pelo Teste de Esfericidade de Bartlett.
+
+</br>
+
+-   **Teste de Esfericidade de Bartlett**
+
+Para o teste chegamos nos seguintes resultados:
+
+```{r}
+#  Teste de esfericidade
+cortest.bartlett(correlacao, n = nrow(dadosQ))
+```
+
+Assim, assumindo que valores menores que 0,05 indicam que uma análise fatorial pode ser útil para nossos dados, pois estamos considerando um nível de significância de 5%, os nossos dados se mostraram adequados para este indicador.
+
+Para reforçarmos a adequabilidade iremos utilizar a outra medida de ajuste, o KMO, que é mostrado abaixo.
+
+</br>
+
+-   **Teste de Kaiser-Meyer-Olkin (KMO)**
+
+```{r}
+# Kaiser-Meyer-Olkin Measure of Sampling Adequacy, ou KMO
+KMO(correlacao)
+```
+
+Segundo Kaiser, um KMO maior que 0.9 indica um excelente ajuste da análise fatorial. Assim, como temos que todos os resultados individuais do KMO acima são maiores que 0.8 e o nosso KMO total foi igual a 0.91, temos que os nossos dados novamente se mostraram bem adequados para a análise fatorial com este outro indicador.
+
+Portanto, com ambas as evidências encontradas acima, seguiremos com a análise fatorial.
+
+</br>
+
+### Número de Fatores
+
+Para o cálculo do número de fatores a serem utilizados em nossa análise, começamos calculando os autovalores e analisando quantos destes estão acima do valor de referência 1.
+
+```{r, echo=TRUE}
+# Calculo dos autovalores
+round(eigen(correlacao)$values,2)
+
+# Numero de autovalores maiores que 1
+sum(eigen(correlacao)$values>1)
+```
+
+</br>
+
+Percebemos pelos resultados acima que temos 7 autovalores maiores do que 1, nos resultando assim num índicio de 7 fatores a serem utilizados. Para reforçarmos os nossos argumentos utilizaremos abaixo os autovalores para entendermos a proporção explicada por cada fator.
+
+</br>
+
+```{r, echo=TRUE}
+# Calculo da proporcao explicada por cada fator
+proporcao_explicacao <- eigen(correlacao)$values/sum(eigen(correlacao)$values)
+
+# Calculo da proporcao de explicacao acumulada
+proporcao_acumulada <- cumsum(proporcao_explicacao)
+
+# Imprime a proporcao acumulada com 2 casas decimais
+round(proporcao_acumulada,2)
+```
+
+</br>
+
+Dessa forma, temos que um valor de referência para a proporção explicada para escolhermos o número de fatores seria considerar a proporção explicada maior que 0.9. Assim, percebemos que com esta abordagem teríamos muitos fatores (25) o que não seria recomendável, por isso, continuaremos considerando os nossos 7 fatores anteriores.
+
+Agora, utilizaremos outro instrumento para verificarmos o número de fatores. O Scree-Plot é dado a seguir:
+
+```{r screeplot, fig.align='left', fig.width=10}
+
+# Scree-plot
+plot(eigen(correlacao)$values, type = 'b', 
+     ylab='Autovalores', main = "Scree - Plot") 
+abline(h = 1, col = "red")
+
+```
+
+Pelo gráfico acima, percebemos que o nosso ponto de inflexão parece estar entre os autovalores 7 e 8, ou seja, pelo Scree - Plot temos o número de fatores sendo iguais a 7. Ainda note que a linha vermelha representa o autovalor igual a 1.
+
+Portanto, com os índicios acima, o número de fatores escolhido foi igual a 7. Assim, passamos a escolha do método de extração e a análise fatorial.
+
+</br>
+
+### Método de Extração e Pesos
+
+Para a extração dos pesos dos fatores, o método que será utilizado será o dos fatores principais. Assim começaremos realizando a análise fatorial sem nenhuma rotação para observar como se comportam os nossos fatores e se necessário utilizaremos uma rotação posteriormente.
+
+</br>
+
+```{r afQ_none, echo=TRUE}
+afQ_none <- fa(dadosQ, 
+               nfactors = 7, 
+               n.obs = 517 , 
+               rotate = "none",
+               residuals = TRUE, fm = "pa")
+```
+
+</br>
+
+Com o código acima geramos os seguintes resultados para os nossos pesos, onde note que os valores não mostrados são aproximadamente iguais a zero.
+
+</br>
+
+```{r}
+afQ_none$loadings
+```
+
+</br>
+
+Percebemos acima que foram encontrados coeficientes maiores nos primeiros fatores, caso este. que fica evidente quando olhamos graficamente para os nossos fatores dois a dois abaixo. Note que quando comparamos utilizando os fatores 6 e 7, estes pesos se tornam mais próximos de zero do que os demais.
+
+</br>
+
+```{r, fig.height=3, fig.width=6}
+par(mfrow = c(1,3))
+
+for (i in 2:ncol(afQ_none$loadings)){
+  plot(afQ_none$loadings[,1], 
+       afQ_none$loadings[,i],
+       xlab = "Factor 1", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA1 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+for (i in 3:ncol(afQ_none$loadings)){
+  plot(afQ_none$loadings[,2], 
+       afQ_none$loadings[,i],
+       xlab = "Factor 2", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA2 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+for (i in 4:ncol(afQ_none$loadings)){
+  plot(afQ_none$loadings[,3], 
+       afQ_none$loadings[,i],
+       xlab = "Factor 3", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA3 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+for (i in 5:ncol(afQ_none$loadings)){
+  plot(afQ_none$loadings[,4], 
+       afQ_none$loadings[,i],
+       xlab = "Factor 4", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA4 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+for (i in 6:ncol(afQ_none$loadings)){
+  plot(afQ_none$loadings[,5], 
+       afQ_none$loadings[,i],
+       xlab = "Factor 5", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA5 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+for (i in 7:ncol(afQ_none$loadings)){
+  plot(afQ_none$loadings[,6], 
+       afQ_none$loadings[,i],
+       xlab = "Factor 6", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA6 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+```
+
+</br>
+
+Sendo assim, antes mesmos de tentarmos uma interpretação dos nossos fatores se torna necessário a utilização de uma rotação, pois conseguirmos rotacionar estes coeficientes de forma que busquemos um melhor ajuste para os nossos fatores.
+
+</br>
+
+### Rotação
+
+Agora, alteraremos a nossa função para análise fatorial, incluindo o método escolhido para a rotação, o equamax, pois este método é uma combinação do método varimax, que simplifica os fatores, e do método quartimax, que simplifica as variáveis.
+
+Assim, o número de variáveis que carregam muito em um fator e o número de fatores necessários para explicar uma variável serão minimizados.
+
+</br>
+
+```{r afQ_equamax, echo=TRUE}
+afQ_equamax <- fa(dadosQ, 
+                  nfactors = 7, 
+                  n.obs = 517, 
+                  rotate = "equamax",
+                  residuals = TRUE, fm = "pa")
+```
+
+</br>
+
+Com o código modificado para a rotação equamax, geramos os seguintes resultados para os nossos pesos, onde novamente note que os valores não mostrados são aproximadamente iguais a zero.
+
+</br>
+
+```{r}
+afQ_equamax$loadings
+```
+
+</br>
+
+Agora percebemos que os pesos calculados parecem mais harmônicos quando também os vizualimos dois a dois.
+
+</br>
+
+```{r, fig.height=3, fig.width=6}
+par(mfrow = c(1,3))
+
+for (i in 2:ncol(afQ_equamax$loadings)){
+  plot(afQ_equamax$loadings[,1], 
+       afQ_equamax$loadings[,i],
+       xlab = "Factor 1", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA1 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+for (i in 3:ncol(afQ_equamax$loadings)){
+  plot(afQ_equamax$loadings[,2], 
+       afQ_equamax$loadings[,i],
+       xlab = "Factor 2", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA2 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+for (i in 4:ncol(afQ_equamax$loadings)){
+  plot(afQ_equamax$loadings[,3], 
+       afQ_equamax$loadings[,i],
+       xlab = "Factor 3", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA3 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+for (i in 5:ncol(afQ_equamax$loadings)){
+  plot(afQ_equamax$loadings[,4], 
+       afQ_equamax$loadings[,i],
+       xlab = "Factor 4", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA4 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+for (i in 6:ncol(afQ_equamax$loadings)){
+  plot(afQ_equamax$loadings[,5], 
+       afQ_equamax$loadings[,i],
+       xlab = "Factor 5", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA5 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+for (i in 7:ncol(afQ_equamax$loadings)){
+  plot(afQ_equamax$loadings[,6], 
+       afQ_equamax$loadings[,i],
+       xlab = "Factor 6", 
+       ylab = paste("Factor", i), 
+       ylim = c(-1,1),
+       xlim = c(-1,1),
+       main = paste0("PA6 x PA", i))
+  abline(h = 0, v = 0)
+}
+
+```
+
+</br>
+
+Assim passamos a interpretação dos nossos fatores.
+
+</br>
+
+### Interpretação dos Fatores
+
+Através dos resultados das etapas anteriores da análise fatorial, chegamos ao seguinte resultado para nossos fatores, onde estamos mostrando graficamente como estes se comportam com nossas variáveis.
+
+</br>
+
+```{r, fig.align='center', fig.height=12, fig.width=5.5}
+#Graph Factor Loading Matrices
+fa.diagram(afQ_equamax, main = "Análise Fatorial")
+```
+
+
+Portanto, com as variáveis associadas aos fatores, podemos interpretar que os nossos fatores tem pesos maiores nas variáveis que melhor estão associadas aquele respectivo fator, ou seja, recomendaríamos um profissional da área, a qual o questionário tem intuito avaliar, procurar denominar nossos fatores já que as perguntas foram agrupadas neste fator que provavelmente específica alguma característica do índividuo.
+
+Assim mostramos abaixo os fatores e suas variáveis com altos pesos como mostrado no gráfico anterior. Note que as questões que vem acompanhada do sinal (**-**) indicam que esta associação entre a questão e o fator tem um coeficiente negativo.
+
+</br>
+
+**PA1 - Fator 1** - Variáveis associadas (com altos coeficientes em módulo):
+
+-   Q4 -- Eu me critico por ter emoções irracionais ou inadequadas.
+-   Q8 -- Costumo avaliar se minhas percepções estão certas ou erradas.
+-   Q12 -- Digo a mim mesma que não deveria estar me sentindo do jeito que estou me sentindo.
+-   Q16 -- Eu acredito que alguns dos meus pensamentos são anormais ou ruins e eu não deveria pensar assim.
+-   Q20 -- Eu faço julgamentos sobre se meus pensamentos são bons ou ruins.
+-   Q24 -- Eu tendo a fazer julgamentos sobre quão valiosas ou inúteis são minhas experiências.
+-   Q28 -- Digo a mim mesma que não deveria estar pensando do jeito que estou pensando.
+-   Q32 -- Eu acho que algumas das minhas emoções são ruins ou inadequadas e eu não deveria senti-las.
+-   Q36 -- Eu me desaprovo quando tenho ideias irracionais.
+
+</br>
+
+**PA2 - Fator 2** - Variáveis associadas (com altos coeficientes em módulo):
+
+-   Q21 -- Presto atenção às sensações, como o vento no meu cabelo ou o sol no meu rosto
+-   Q25 -- Presto atenção aos sons, como relógios, pássaros cantando ou carros passando.
+-   Q29 -- Percebo os cheiros e aromas das coisas.
+-   Q33 -- Percebo elementos visuais na arte ou na natureza, como cores, formas, texturas ou padrões de luz e sombra.
+
+</br>
+
+**PA3 - Fator 3** - Variáveis associadas (com altos coeficientes em módulo):
+
+-   Q2 -- Sou bom em encontrar as palavras para descrever meus sentimentos.
+-   Q6 -- Posso facilmente colocar minhas crenças, opiniões e expectativas em palavras.
+-   Q10 -- Sou bom em pensar em palavras para expressar minhas percepções, como gosto, cheiro ou som das coisas.
+-   Q14 -- É difícil para mim encontrar as palavras para descrever o que estou pensando. (**-**)
+-   Q18 -- Tenho dificuldade em pensar nas palavras certas para expressar como me sinto sobre as coisas. (**-**)
+-   Q22 -- Quando tenho uma sensação no meu corpo, é difícil para mim descrevê-la porque não consigo encontrar as palavras certas. (**-**)
+-   Q26 -- Mesmo quando estou me sentindo terrivelmente chateada, consigo encontrar uma maneira de colocar isso em palavras.
+-   Q34 -- Minha tendência natural é colocar minhas experiências em palavras.
+
+</br>
+
+**PA4 - Fator 4** - Variáveis associadas (com altos coeficientes em módulo):
+
+-   Q7 -- Quando estou fazendo algo, estou apenas focado no que estou fazendo, nada mais.
+-   Q15 -- Quando estou lendo, concentro toda a minha atenção no que estou lendo.
+-   Q19 -- Quando faço as coisas, fico totalmente envolvido nelas e não penso em mais nada.
+-   Q31 -- Costumo fazer várias coisas ao mesmo tempo, em vez de me concentrar em uma coisa de cada vez. (**-**)
+-   Q38 -- Fico completamente absorto no que estou fazendo, de modo que toda a minha atenção está focada nisso.
+
+</br>
+
+**PA5 - Fator 5** - Variáveis associadas (com altos coeficientes em módulo):
+
+-   Q3 -- Quando faço coisas, minha mente vagueia e me distraio facilmente.
+-   Q11 -- Eu dirijo no "piloto automático" sem prestar atenção no que estou fazendo.
+-   Q23 -- Não presto atenção ao que estou fazendo porque estou sonhando acordado, preocupado ou distraído.
+-   Q27 -- Quando estou fazendo tarefas domésticas, como limpeza ou lavanderia, tendo a sonhar acordado ou pensar em outras coisas.
+-   Q35 -- Quando estou trabalhando em algo, parte da minha mente está ocupada com outros tópicos, como o que farei mais tarde ou coisas que preferiria fazer.
+
+</br>
+
+**PA6 - Fator 6** - Variáveis associadas (com altos coeficientes em módulo):
+
+-   Q17 -- Percebo como os alimentos e as bebidas afetam meus pensamentos, sensações corporais e emoções.
+-   Q30 -- Eu intencionalmente fico ciente dos meus sentimentos.
+-   Q37 -- Presto atenção em como minhas emoções afetam meus pensamentos e comportamento.
+-   Q39 -- Percebo quando meu humor começa a mudar.
+
+</br>
+
+**PA7 - Fator 7** - Variáveis associadas (com altos coeficientes em módulo):
+
+-   Q1 -- Percebo mudanças em meu corpo, como se minha respiração diminui ou acelera.
+-   Q5 -- Presto atenção se meus músculos estão tensos ou relaxados.
+-   Q9 -- Quando estou andando, noto deliberadamente as sensações do meu corpo se movendo.
+-   Q13 -- Quando tomo banho, fico alerta às sensações da água no meu corpo.
+
+</br>
+
+### Cálculo dos Fatores
+
+Por fim, podemos calcular os fatores e os apresentá-los como segue, onde estes serão guardados nos dados fatores. Note que para este cálculo estamos utilizando o método por regressão (default na função fa).
+
+</br>
+
+```{r message=FALSE, warning=FALSE, echo=TRUE}
+
+# Calculo dos fatores
+fatores = afQ_equamax$scores
+
+# Primeiras linhas
+head(fatores)
+```
+
+</br>
+
+# Clusterização
+
+Como mencionamos anteriormente, a segunda parte deste trabalho visa realizar a técnica de clusterização para buscarmos agrupamento de nossas observações (indivíduos). Sendo assim, esta seção estará dividida nas duas principais técnicas de agrupamento:
+
+-   **Hierárquica**
+-   **Não - Hierárquica**
+
+</br>
+</br>
+</br>
+
+## Hierárquica
+
+Iniciaremos com a técnica hierárquica, onde teremos que encontrar primeiramente o nosso número de clusters através de alguns métodos escolhidos e depois prosseguiremos com a implementação deste tipo de clusterização, buscando utilizar o melhor método para encontrarmos os clusters.
+
+### Agrupamento Utilizando Todas as Variáveis
+
+Nesta primeira parte, utilizaremos todas as variáveis do nosso banco de dados para encontrar o número de clusters e implementar a clusterização hierárquica.
+
+</br>
+
+#### Número de Clusters (k) - Todas as variáveis
+
+Para encontrarmos um número ideal de clusters utilizaremos dois métodos: Elbow e Gap. Além disso utilizaremos o pacote NbClust.
+
+</br>
+
+-   **Método Elbow**
+
+Este método consiste em calcular o agrupamento hierárquico usando diferentes valores de clusters k. Em seguida, o wss (within sum of square) é desenhado de acordo com o número de clusters, onde a localização de uma curva no gráfico é geralmente considerado como um indicador do número adequado de clusters.
+
+```{r message=FALSE, warning=FALSE}
+fviz_nbclust(dadosQ, hcut, method = "wss", ) +
+geom_vline(xintercept = 4, linetype = 2)
+```
+
+O gráfico acima representa a variação dentro dos clusters. Podemos notar que os valores diminuem à medida que k aumenta, mas pode-se ver um "cotovelo" entre k = 4 e k = 5, ou seja, esta curva indica que clusters além do quarto cluster têm pouco valor para nossa análise e por isso através desse método temos k = 4.
+
+</br>
+
+-   **Método Gap**
+
+Outra método para escolhermos o número de clusters é através da estatística gap. A estatística de gap compara o total dentro da variação intra-cluster para diferentes valores de k com seus valores esperados sob distribuição de referência nula dos dados.
+
+Além disso, este método é mais recomendado quando comparado ao anterior, pois este fornece um procedimento estatístico que formaliza a escolha para estimar o número ótimo de clusters. O gráfico produzido no R nos demonstra as estatísticas Gap calculadas.
+
+```{r message=FALSE, warning=FALSE}
+
+# Semente
+set.seed(123)
+
+# Calculamos a Estatística Gap para cada cluster
+gap_stat <- clusGap(dadosQ, FUN = hcut, nstart = 25, K.max = 10, B = 50, verbose = F)
+
+# Produzimos um gráfico de clusters vs. gap statistic
+fviz_gap_stat(gap_stat)
+
+```
+
+Percebemos assim que utilizando a estatística Gap obtemos no gráfico acima a indicação do número de clusters iguais a 2, o que nos retorna um resultado diferente do que vimos através do método de Elbow.
+
+Portanto, para obtermos mais índicios para esta nossa escolha do k ideal, utilizaremos o pacote NbClust que utiliza cerca de 30 métodos em busca de encontrar o melhor número de clusters.
+
+</br>
+
+-   **Pacote NbClust**
+
+Por este pacote utilizar cerca de 30 método, como já dito, este fornece cerca de 30 índices para determinar o número relevante de clusters e propostas aos usuários para o melhor esquema de agrupamento a partir dos diferentes resultados obtidos variando todos os combinações de número de clusters, medidas de distância e métodos de clustering.
+
+Assim, através da utilização da função NbClust() (mesmo nome do pacote), temos o seguinte resultado onde estamos informando a nossa escolha de método para utilizar na clusterização.
+
+```{r include=FALSE, echo=TRUE}
+# Utilizando a função do pacote NbClust
+nb <- NbClust(dadosQ, distance = "euclidean", min.nc = 2, max.nc = 10, method = "ward.D")
+```
+
+```{r}
+# Resultados
+fviz_nbclust(nb)
+```
+
+Pelo gráfico acima, podemos concluir que podemos otimizar a nossa clusterização utilizando dois ou três clusters. Assim, com os resultados já encontrados anteriormente, decidimos pela utilização de 3 clusters.
+
+</br>
+
+#### Árvore de grupos
+
+Agora, nesta parte estaremos interessados em utilizar a técnica hierárquica com todas as nossas variáveis.
+
+Assim, neste trabalho utilizaremos a distância euclidiana para realizar o agrupamento, porém buscaremos verificar qual das técnicas hierárquicas melhor se aplica aos nossos dados com a distância escolhida.
+
+Para medir o quão bem a árvore de grupos que geraremos pelas funções reflete os nossos dados, calcularemos a correlação entre as distâncias cofenéticas e os dados de distância originais gerados pela função dist(). Se o agrupamento for válido, a ligação de objetos no dendograma deve ter uma forte correlação com as distâncias entre objetos na matriz de distância original.
+
+Dessa forma, temos os seguintes resultados para a escolha dos nossos métodos de ligação:
+
+</br>
+
+```{r message=FALSE, warning=FALSE}
+
+### METODO DE WARD 1
+h.cluster1 <- dadosQ %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "ward.D")
+
+### METODO DE WARD 2
+h.cluster2 <- dadosQ %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "ward.D2")
+
+### METODO DE SINGLE
+h.cluster3 <- dadosQ %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "single")
+
+### METODO COMPLETO
+h.cluster4 <- dadosQ %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "complete")
+
+### METODO DE AVERAGE
+h.cluster5 <- dadosQ %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "average")
+
+### MCQUITTY
+h.cluster6 <- dadosQ %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "mcquitty")
+
+### MEDIANA
+h.cluster7 <- dadosQ %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "median")
+
+### METODO DE CENTROIDE
+h.cluster8 <- dadosQ %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "centroid")
+
+# Calculando as distâncias cofoneticas
+res.coph1 <- cophenetic(h.cluster1)
+res.coph2 <- cophenetic(h.cluster2)
+res.coph3 <- cophenetic(h.cluster3)
+res.coph4 <- cophenetic(h.cluster4)
+res.coph5 <- cophenetic(h.cluster5)
+res.coph6 <- cophenetic(h.cluster6)
+res.coph7 <- cophenetic(h.cluster7)
+res.coph8 <- cophenetic(h.cluster8)
+res.dist <- dist(dadosQ, method = "euclidean") # dissimilarity matrix
+
+# Correlacao entre distancia cofonetica e a distancia original
+c1 = cor(res.dist, res.coph1) # metodo de ward 1
+c2 = cor(res.dist, res.coph2) # metodo de ward 2
+c3 = cor(res.dist, res.coph3) # ligacao simples
+c4 = cor(res.dist, res.coph4) # ligacao completa
+c5 = cor(res.dist, res.coph5) # ligacao media
+c6 = cor(res.dist, res.coph6) # ligacao mcquitty
+c7 = cor(res.dist, res.coph7) # mediana
+c8 = cor(res.dist, res.coph8) # metodo do centroide
+correlacoes_cof = c(c1, c2, c3, c4, 
+                    c5, c6, c7, c8)
+
+
+```
+
+```{r}
+
+# Tabela contendo os resultados
+tabela_cof = data.frame(c("Método de Ward 1", "Método de Ward 2", "Ligação Simples", 
+                          "Ligação Completa", "Ligação Média", "Mcquitty",
+                          "Mediana", "Método do Centróide"), 
+                        correlacoes_cof)
+colnames(tabela_cof) = c("Métodos de Ligação", "Correlações Entre Distância Cofonética e a Distância Original")
+
+kable(tabela_cof, align = "c") %>%
+  kable_paper("hover", full_width = T)
+```
+
+</br>
+
+Apesar de possuir uma das menores correlações, escolhemos o método de ward, pois este foi o que apresentou uma melhor visualização do resultado do método.
+
+</br>
+
+```{r message=FALSE, warning=FALSE, fig.align='center'}
+
+fviz_dend(h.cluster1, rect = TRUE, main = "Dendograma feito pelo método do Ward ", k = 3)
+```
+
+
+Abaixo, podemos ver uma tabela de frequências desse resultado acima do agrupamento utilizado. Dessa vez para o geramento da tabela abaixo utilizamos o pacote MVar.pt.
+
+</br>
+
+```{r}
+h1 <- MVar.pt::Cluster(dadosQ, numgrupos = 3, method = "ward.D", distance = "euclidean")
+aux1 <- as.data.frame(table(h1$groups[,40]))
+
+colnames(aux1) <- c("Cluster", "Frequência")
+
+kable(aux1, align = "c") %>%
+  kable_paper("hover", full_width = T)
+```
+</br>
+
+Assim, percebemos que o seguinte sistema de cores:
+
+- <span style="color:blue"> Cluster 1 = azul; 
+- <span style="color:red"> Cluster 2 = vermelho; </span>
+- <span style="color:green"> Cluster 3 = verde </span>.
+
+</br>
+
+### Agrupamento Utilizando os Fatores
+
+Nesta segunda parte, utilizaremos os fatores definidos anteriormente na seção de Análise Fatorial para encontrar o número de clusters e implementar a clusterização hierárquica.
+
+</br>
+
+#### Número de Clusters (k) - Todas as variáveis
+
+Para encontrarmos um número ideal de clusters utilizaremos novamente o ppacote NbClust, pois os outros dois métodos vistos não foi possível encontrar bons valores para k
+
+</br>
+
+-   **Pacote NbClust**
+
+Por este pacote utilizar cerca de 30 método, como já dito, este fornece 30 índices para determinar o número relevante de clusters e propostas aos usuários para o melhor esquema de agrupamento a partir dos diferentes resultados obtidos variando todos os combinações de número de clusters, medidas de distância e métodos de clustering.
+
+Assim, através da utilização da função NbClust() (mesmo nome do pacote), temos o seguinte resultado, onde note que novamente estamos informando o método escolhido.
+
+```{r include=FALSE}
+# Utilizando a função do pacote NbClust
+nb <- NbClust(fatores, distance = "euclidean", min.nc = 2, max.nc = 10, method = "ward.D")
+```
+
+```{r}
+# Resultados
+fviz_nbclust(nb)
+```
+
+Pelo gráfico acima, podemos concluir que podemos otimizar a função utilizando dois clusters. Porém como tivemos com todas as variáveis a escolha de 3 clusters para realizar a clusterização, aqui também utilizaremos o mesmo número k = 3, condizendo parcialmente com o encontrado acima, pois o número 3 foi o segundo número de clusters indicado.
+
+
+</br>
+
+#### Árvore de grupos
+
+Agora, nesta parte estaremos interessados em utilizar a técnica hierárquica com todos os fatores encontrados.
+
+Assim, utilizaremos a distãncia euclidiana para realizar o agrupamento, porém buscaremos verificar qual das técnicas hierárquicas melhor se aplica aos nossos dados com a distância escolhida.
+
+Para medir o quão bem a árvore de grupos que geraremos pelas funções reflete os nossos dados, calcularemos a correlação entre as distâncias cofenéticas e os dados de distância originais gerados pela função dist(). Se o agrupamento for válido, a ligação de objetos no dendograma deve ter uma forte correlação com as distâncias entre objetos na matriz de distância original.
+
+Dessa forma, temos os seguintes resultados para a escolha dos nossos métodos de ligação:
+
+</br>
+
+```{r message=FALSE, warning=FALSE}
+
+### METODO DE WARD 1
+h.cluster1 <- fatores %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "ward.D")
+
+### METODO DE WARD 2
+h.cluster2 <- fatores %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "ward.D2")
+
+### METODO DE SINGLE
+h.cluster3 <- fatores %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "single")
+
+### METODO COMPLETO
+h.cluster4 <- fatores %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "complete")
+
+### METODO DE AVERAGE
+h.cluster5 <- fatores %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "average")
+
+### MCQUITTY
+h.cluster6 <- fatores %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "mcquitty")
+
+### MEDIANA
+h.cluster7 <- fatores %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "median")
+
+### METODO DE CENTROIDE
+h.cluster8 <- fatores %>% 
+  dist(., method = "euclidean") %>% 
+  hclust(., method = "centroid")
+
+# Calculando as distâncias cofoneticas
+res.coph1 <- cophenetic(h.cluster1)
+res.coph2 <- cophenetic(h.cluster2)
+res.coph3 <- cophenetic(h.cluster3)
+res.coph4 <- cophenetic(h.cluster4)
+res.coph5 <- cophenetic(h.cluster5)
+res.coph6 <- cophenetic(h.cluster6)
+res.coph7 <- cophenetic(h.cluster7)
+res.coph8 <- cophenetic(h.cluster8)
+res.dist <- dist(dadosQ, method = "euclidean") # dissimilarity matrix
+
+# Correlacao entre distancia cofonetica e a distancia original
+c1 = cor(res.dist, res.coph1) # metodo de ward 1
+c2 = cor(res.dist, res.coph2) # metodo de ward 2
+c3 = cor(res.dist, res.coph3) # ligacao simples
+c4 = cor(res.dist, res.coph4) # ligacao completa
+c5 = cor(res.dist, res.coph5) # ligacao media
+c6 = cor(res.dist, res.coph6) # ligacao mcquitty
+c7 = cor(res.dist, res.coph7) # mediana
+c8 = cor(res.dist, res.coph8) # metodo do centroide
+correlacoes_cof = c(c1, c2, c3, c4, 
+                    c5, c6, c7, c8)
+
+
+```
+
+```{r}
+
+# Tabela contendo os resultados
+tabela_cof = data.frame(c("Método de Ward 1", "Método de Ward 2", "Ligação Simples", 
+                          "Ligação Completa", "Ligação Média", "Mcquitty",
+                          "Mediana", "Método do Centróide"), 
+                        correlacoes_cof)
+colnames(tabela_cof) = c("Métodos de Ligação", "Correlações Entre Distância Cofonética e a Distância Original")
+
+kable(tabela_cof, align = "c") %>%
+  kable_paper("hover", full_width = T)
+```
+
+</br>
+
+Apesar de possuir uma das menores correlações, o método de ward foi novamente o que apresentou uma melhor visualização do resultado do método.
+
+</br>
+
+```{r message=FALSE, warning=FALSE, fig.align='center'}
+
+fviz_dend(h.cluster1, rect = TRUE, main = "Dendograma feito pelo método do Ward ", k = 3)
+```
+
+Abaixo, podemos ver uma tabela de frequências do resultado do método de agrupamento utilizado. Dessa vez para o geramento da tabela abaixo utilizamos o pacote MVar.pt.
+
+```{r}
+h2 <- MVar.pt::Cluster(as.data.frame(fatores), numgrupos = 3, method = "ward.D", distance = "euclidean")
+aux2 <- as.data.frame(table(h2$groups[,8]))
+
+colnames(aux2) <- c("Cluster", "Frequência")
+
+kable(aux2, align = "c") %>%
+  kable_paper("hover", full_width = T)
+```
+</br>
+
+Assim, percebemos que temos o seguinte sistema de cores (note as mudanças):
+
+- <span style="color:red"> Cluster 1 = vermelho; </span>
+- <span style="color:blue"> Cluster 2 = azul; </span>
+- <span style="color:green"> Cluster 3 = verde </span>.
+
+</br>
+
+### Comparando os Agrupamentos com Todas Variáveis e Fatores
+
+Portanto, após ambas as análises com os fatores e sem estes, podemos comparar os nossos resultados nas tabelas de agrupamento que vem a seguir.
+
+</br>
+
+```{r}
+# Tabela com todas as classificacoes
+grupos = cbind(1:517, h1$groups[,40], h2$groups[,8]) 
+colnames(grupos) <- c("Observação", "Agrupamento Todas Variáveis", "Agrupamento Fatores")
+kable(grupos, align = "c") %>%
+  kable_paper("hover", full_width = T) %>%
+  scroll_box(width = "800px", height = "500px")
+```
+
+</br>
+
+Com a tabela acima, conseguimos verficar como cada procedimento efetuou o agrupamento da respectiva observação. Para um olhar mais geral sobre os dados, temos abaixos as tabelas já mostradas mas agora evidenciando a diferença de frequências entre cada agrupamento.
+
+</br>
+
+```{r}
+# Tabela com ambas as frequências
+aux3 <- merge(aux1, aux2, by = "Cluster")
+colnames(aux3) <- c("Cluster", "Agrupamento Todas Variáveis", "Agrupamento Fatores")
+
+kable(aux3, align = "c") %>%
+  kable_paper("hover", full_width = T)
+```
+</br>
+
+Percebemos acima que os dados antes estavam agrupados principalmente nos dois primeiros clusters e quando consideramos os fatores, estes dados parecem estarem divididos entre os 3 agrupamentos de uma forma mais harmônica. 
+
+Aqui ressaltamos que para compreender melhor se essa mudança da separação dos agrupamentos estaria sendo num sentido positivo para a pesquisa do questionário, deveríamos novamente contar com ajuda de um profissional da área, pois a interpretação dos agrupamentos pode estar sendo influenciada pelas medidas que os fatores podem estar sendo utilizados (interpretações dos fatores).
+
+Além disso, para entendermos melhor as mudanças que ocorrem entre ambos os agrupamentos, temos abaixo uma tabela que mostra a frequência das mudanças que ocorreram quando consideramos o indivíduo num primeiro momento classificado sem os fatores e depois considerando os fatores.
+
+</br>
+
+```{r}
+
+# Analisando as possiveis mudancas
+grupos = as.data.frame(grupos)
+grupos$Troca = ifelse(grupos$`Agrupamento Todas Variáveis` == 1 & grupos$`Agrupamento Fatores` == 1,
+                      "1 -> 1",
+               ifelse(grupos$`Agrupamento Todas Variáveis` == 1 & grupos$`Agrupamento Fatores` == 2,
+                      "1 -> 2", 
+               ifelse(grupos$`Agrupamento Todas Variáveis` == 1 & grupos$`Agrupamento Fatores` == 3,
+                      "1 -> 3",
+               ifelse(grupos$`Agrupamento Todas Variáveis` == 2 & grupos$`Agrupamento Fatores` == 1,
+                      "2 -> 1",
+               ifelse(grupos$`Agrupamento Todas Variáveis` == 2 & grupos$`Agrupamento Fatores` == 2,
+                      "2 -> 2",
+               ifelse(grupos$`Agrupamento Todas Variáveis` == 2 & grupos$`Agrupamento Fatores` == 3,
+                      "2 -> 3",
+               ifelse(grupos$`Agrupamento Todas Variáveis` == 3 & grupos$`Agrupamento Fatores` == 1,
+                      "3 -> 1",
+               ifelse(grupos$`Agrupamento Todas Variáveis` == 3 & grupos$`Agrupamento Fatores` == 2,
+                      "3 -> 2", "3 -> 3"))))))))
+grupos$Troca = as.factor(grupos$Troca)
+aux4 = table(grupos$Troca)
+
+kable(t(aux4), align = "c", caption = "Trocas Ocorridas nas Classificações dos Agrupamentos") %>%
+  kable_paper("hover", full_width = T)
+```
+</br>
+
+Pela tabela acima percebemos que na sua maioria os indivíduos continuaram sendo agrupados da mesma forma, porém algumas notórias mudanças ocorreram, principalmente no agrupamento 1 que teve metade de seus indivíduos redistribuídos entre 2 e 3.
+
+Assim, concluimos que seria necessário uma devida interpretação destes clusters juntamente dos fatores para uma melhor conlusão. Por isso, passaremos agora ao método não - hierárquico de clusterização.
+
+</br>
+</br>
+
+## Não - Hierárquica
+
+Nesta segunda parte, utilizaremos o algoritmo de clusterização não-hierárquica, mais especificamente com o método K-Means. 
+
+Este método baseado em centróides requer que o espaço seja euclidiano. Usualmente, o valor de K é conhecido e deve ser fornecido pelo usuário mas é possível obtê-lo de outras formas. Iremos definir primeiramente o nosso número de clusters através de alguns resultados anteriores e depois prosseguiremos com a implementação deste tipo de clusterização.
+
+</br>
+
+### Agrupamento Utilizando Todas as Variáveis
+
+Aqui, utilizaremos todas as variáveis do nosso banco de dados para encontrar o número de clusters e implementar a clusterização não-hierárquica.
+
+</br>
+
+#### Número de Clusters (k) - Todas as variáveis
+
+O nosso número de clusters k será k = 3, pois assim estaremos tentando realizar o mesmo agrupamento que o tipo hierárquico podendo assim compará-los.
+
+</br>
+
+#### K - Means com k = 3
+
+Assim, utilizando a função kmeans, geraremos os nossos clusters.
+
+</br>
+
+```{r message=FALSE, warning=FALSE}
+km.res1 <- kmeans(dadosQ, 3, nstart = 25)
+km.res1$center
+```
+
+</br>
+
+No gráfico abaixo, podemos ver os grupos obtidos por meio do algoritmo K-Means com k=3 utilizando todas as variáveis do nosso banco de dados. É possível notar uma separação bem delimitada entre todos os clusters, o que pode estar evidenciando como o algoritmo está agrupando os dados.
+
+</br>
+
+```{r message=FALSE, warning=FALSE, fig.align='center'}
+fviz_cluster(km.res1, data = dadosQ)
+```
+
+</br>
+
+Também temos abaixo a tabela de frequências do resultado do método de agrupamento utilizado, novamente com o pacote MVar.pt.
+
+</br>
+
+```{r}
+h3 <- MVar.pt::Cluster(dadosQ, numgrupos = 3, method = "ward.D", distance = "euclidean", hierarquico = FALSE)
+aux3 <- as.data.frame(table(h3$groups[,40]))
+
+colnames(aux3) <- c("Cluster", "Frequência")
+
+kable(aux3, align = "c") %>%
+  kable_paper("hover", full_width = T)
+```
+
+
+</br>
+
+### Agrupamento Utilizando Todos os Fatores
+
+Aqui, utilizaremos os fatores encontrados na seção da Análise Fatorial para encontrar o número de clusters e implementar a clusterização não-hierárquica.
+
+</br>
+
+#### Número de Clusters (k) - Todas as variáveis
+
+O nosso número de clusters k novamente será k = 3, pois assim estaremos tentando realizar o mesmo agrupamento que o tipo hierárquico e podemos comparar com a abordagem utilizando todas as variáveis.
+
+</br>
+
+#### K - Means com k = 3
+
+Assim, utilizando a função kmeans, geraremos os nossos clusters.
+
+</br>
+
+```{r message=FALSE, warning=FALSE}
+km.res2 <- kmeans(fatores, 3, nstart = 25)
+km.res2$center
+```
+
+</br>
+
+No gráfico abaixo, podemos ver os grupos obtidos por meio do algoritmo K-Means com k=3 utilizando os fatores do nosso banco de dados. É possível notar uma grande sobreposição entre todos os clusters, o que pode estar evidenciando como o algoritmo está agrupando de uma forma diferente do anterior.
+
+</br>
+
+```{r message=FALSE, warning=FALSE}
+fviz_cluster(km.res2, data = fatores)
+```
+</br> 
+
+Também temos abaixo a tabela de frequências do resultado do método de agrupamento utilizado novamente utilizando o pacote MVar.pt.
+
+</br>
+
+```{r}
+h4 <- MVar.pt::Cluster(as.data.frame(fatores), numgrupos = 3, method = "ward.D", distance = "euclidean")
+aux4 <- as.data.frame(table(h4$groups[,8]))
+
+colnames(aux4) <- c("Cluster", "Frequência")
+
+kable(aux4, align = "c") %>%
+  kable_paper("hover", full_width = T)
+```
+
+</br>
+
+### Comparando os Agrupamentos com Todas Variáveis e Fatores
+
+Portanto, após ambas as análises com os fatores e sem estes, podemos comparar os nossos resultados nas tabelas de agrupamento que vem a seguir.
+
+</br>
+
+```{r}
+# Tabela com todas as classificacoes
+grupos2 = cbind(1:517, h3$groups[,40], h4$groups[,8]) 
+colnames(grupos2) <- c("Observação", "Agrupamento Todas Variáveis", "Agrupamento Fatores")
+kable(grupos2, align = "c") %>%
+  kable_paper("hover", full_width = T) %>%
+  scroll_box(width = "800px", height = "500px")
+```
+</br>
+
+Com a tabela acima, conseguimos verficar como cada procedimento efetuou o agrupamento da respectiva observação. Para um olhar mais geral sobre os dados, temos abaixos as tabelas já mostradas mas agora evidenciando a diferença de frequências entre cada agrupamento.
+
+</br>
+
+```{r}
+# Tabela com ambas as frequências
+aux5 <- merge(aux3, aux4, by = "Cluster")
+colnames(aux5) <- c("Cluster", "Agrupamento Todas Variáveis", "Agrupamento Fatores")
+
+kable(aux5, align = "c") %>%
+  kable_paper("hover", full_width = T)
+```
+</br>
+
+Percebemos acima que os dados antes estavam agrupados praticamente de forma igualitária entre os clusters e quando consideramos os fatores chegamos ao mesmo agrupamento realizado com os fatores no método hierárquico, evidenciando assim um possível comportamento que pode ser evidenciado graficamente. 
+
+Aqui ressaltamos que para compreender melhor se essa mudança da separação dos agrupamentos, novamente, deveríamos contar com ajuda de um profissional da área, pois a interpretação dos agrupamentos pode estar sendo influenciada pelas medidas que os fatores podem estar sendo utilizados (interpretações dos fatores).
+
+Além disso, para entendermos melhor as mudanças que ocorrem entre ambos os agrupamentos, temos abaixo uma tabela que mostra a frequência das mudanças que ocorreram quando consideramos o indivíduo num primeiro momento classificado sem os fatores e depois considerando os fatores.
+
+</br>
+
+
+```{r}
+
+# Analisando as possiveis mudancas
+grupos2 = as.data.frame(grupos2)
+grupos2$Troca = ifelse(grupos2$`Agrupamento Todas Variáveis` == 1 & grupos2$`Agrupamento Fatores` == 1,
+                      "1 -> 1",
+               ifelse(grupos2$`Agrupamento Todas Variáveis` == 1 & grupos2$`Agrupamento Fatores` == 2,
+                      "1 -> 2", 
+               ifelse(grupos2$`Agrupamento Todas Variáveis` == 1 & grupos2$`Agrupamento Fatores` == 3,
+                      "1 -> 3",
+               ifelse(grupos2$`Agrupamento Todas Variáveis` == 2 & grupos2$`Agrupamento Fatores` == 1,
+                      "2 -> 1",
+               ifelse(grupos2$`Agrupamento Todas Variáveis` == 2 & grupos2$`Agrupamento Fatores` == 2,
+                      "2 -> 2",
+               ifelse(grupos2$`Agrupamento Todas Variáveis` == 2 & grupos2$`Agrupamento Fatores` == 3,
+                      "2 -> 3",
+               ifelse(grupos2$`Agrupamento Todas Variáveis` == 3 & grupos2$`Agrupamento Fatores` == 1,
+                      "3 -> 1",
+               ifelse(grupos2$`Agrupamento Todas Variáveis` == 3 & grupos2$`Agrupamento Fatores` == 2,
+                      "3 -> 2", "3 -> 3"))))))))
+grupos2$Troca = as.factor(grupos2$Troca)
+aux6 = table(grupos2$Troca)
+
+kable(t(aux6), align = "c", caption = "Trocas Ocorridas nas Classificações dos Agrupamentos") %>%
+  kable_paper("hover", full_width = T)
+
+```
+
+</br>
+
+Pela tabela acima percebemos que diferentemente do que ocorreu nas comparações do agrupamento hierárquico, aqui quando consideramos os fatores, ocorre um maior número de mudança em todos os agrupamentos, algo que pode ser verificado especificamente numa das tabelas já demonstradas.
+
+Assim, concluimos novamente que seria necessário uma devida interpretação destes clusters juntamente dos fatores para uma melhor conlusão, principalmente porque quando consideramos os fatores e um número de clusters iguais a 3 tivemos que ambos os algoritmos hierárquico e não - hierárquico resultaram no mesmo agrupamento para os dados.
+
+
